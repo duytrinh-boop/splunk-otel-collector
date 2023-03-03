@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - agent-bundle-arm64
   pull_request:
     paths:
       - '.github/workflows/integration-test.yml'
@@ -32,9 +33,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        # TODO: add support for arm64
-        # ARCH: [ "amd64", "arm64" ]
-        ARCH: [ "amd64" ]
+        ARCH: [ "amd64", "arm64" ]
     steps:
       - uses: actions/checkout@v3
         with:
@@ -77,9 +76,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        # TODO: add support for arm64
-        # ARCH: [ "amd64", "arm64" ]
-        ARCH: [ "amd64" ]
+        ARCH: [ "amd64", "arm64" ]
       fail-fast: false
     needs: [docker-otelcol]
     steps:
@@ -120,9 +117,7 @@ jobs:
     strategy:
       matrix:
         GOTESPLIT_INDEX: [ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" ]
-        # TODO: add support for arm64
-        # ARCH: [ "amd64", "arm64" ]
-        ARCH: [ "amd64" ]
+        ARCH: [ "amd64", "arm64" ]
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
