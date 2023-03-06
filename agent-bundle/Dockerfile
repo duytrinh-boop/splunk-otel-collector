@@ -16,7 +16,7 @@ ARG ARCH=amd64
 ARG JDK_VERSION=11.0.18_10
 ARG MAVEN_VERSION=3.6.0
 ARG PYTHON_VERSION=3.8.10
-ARG PIP_VERSION=21.0.1
+ARG PIP_VERSION=23.0.1
 ARG COLLECTD_VERSION=5.8.0-sfx0
 ARG COLLECTD_COMMIT=4d3327b14cf4359029613baf4f90c4952702105e
 ARG DOCKER_REPO=docker.io
@@ -43,7 +43,7 @@ RUN ENCODED_VER=$(echo $JDK_VERSION | sed 's/_/%2B/g') && \
     else \
     OPENJDK_URL="${OPENJDK_BASE_URL}/jdk-${ENCODED_VER}/OpenJDK11U-jdk_${ARCH}_linux_hotspot_${JDK_VERSION}.tar.gz"; \
     fi && \
-    wget -O /tmp/openjdk.tar.gz "$OPENJDK_URL"
+    wget -nv -O /tmp/openjdk.tar.gz "$OPENJDK_URL"
 
 RUN mkdir -p /opt/root && \
     tar -C /opt/root -xzf /tmp/openjdk.tar.gz && \
@@ -60,7 +60,7 @@ RUN mkdir -p /opt/root/jre && \
 
 ENV MAVEN_BASE_URL="https://archive.apache.org/dist/maven/maven-3"
 
-RUN wget -O /tmp/maven.tar.gz ${MAVEN_BASE_URL}/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
+RUN wget -nv -O /tmp/maven.tar.gz ${MAVEN_BASE_URL}/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
     tar -C /tmp -xzf /tmp/maven.tar.gz && \
     rm -f /tmp/maven.tar.gz
 
@@ -153,13 +153,13 @@ RUN sed -i -e '/^deb-src/d' /etc/apt/sources.list &&\
       quilt \
       zlib1g-dev
 
-RUN wget https://dev.mysql.com/get/mysql-apt-config_0.8.12-1_all.deb && \
+RUN wget -nv https://dev.mysql.com/get/mysql-apt-config_0.8.12-1_all.deb && \
     apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 467B942D3A79BD29 && \
     dpkg -i mysql-apt-config_0.8.12-1_all.deb && \
     rm -f mysql-apt-config_0.8.12-1_all.deb && \
     apt-get update && apt-get install -y libmysqlclient-dev libcurl4-gnutls-dev
 
-RUN wget -O /tmp/Python-${PYTHON_VERSION}.tgz https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz &&\
+RUN wget -nv -O /tmp/Python-${PYTHON_VERSION}.tgz https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz &&\
     cd /tmp &&\
     tar xzf Python-${PYTHON_VERSION}.tgz && \
     cd Python-${PYTHON_VERSION} && \
@@ -178,7 +178,7 @@ ARG COLLECTD_VERSION
 ARG COLLECTD_COMMIT
 
 RUN cd /tmp &&\
-    wget https://github.com/signalfx/collectd/archive/${COLLECTD_COMMIT}.tar.gz &&\
+    wget -nv https://github.com/signalfx/collectd/archive/${COLLECTD_COMMIT}.tar.gz &&\
     tar -xvf ${COLLECTD_COMMIT}.tar.gz &&\
     mkdir -p /usr/src/ &&\
     mv collectd-${COLLECTD_COMMIT}* /usr/src/collectd &&\
@@ -256,7 +256,7 @@ RUN /opt/collect-libs /opt/deps /usr/sbin/collectd /usr/lib/collectd/
 
 # Compile patchelf statically from source
 RUN cd /tmp &&\
-    wget https://nixos.org/releases/patchelf/patchelf-0.11/patchelf-0.11.tar.gz &&\
+    wget -nv https://nixos.org/releases/patchelf/patchelf-0.11/patchelf-0.11.tar.gz &&\
     tar -xf patchelf*.tar.gz &&\
     cd patchelf-0.11* &&\
     ./configure LDFLAGS="-static" &&\
@@ -276,6 +276,17 @@ FROM collectd as python-plugins
 ARG PIP_VERSION
 
 RUN /usr/local/bin/python3 -m pip install --upgrade pip==$PIP_VERSION
+
+# rust is required for building the cryptography pip dependency on ppc64le
+RUN if [ "$ARCH" = "ppc64le" ]; then \
+    cd /tmp && \
+    wget -nv https://static.rust-lang.org/dist/rust-1.48.0-powerpc64le-unknown-linux-gnu.tar.gz && \
+    tar -xzf rust-1.48.0-powerpc64le-unknown-linux-gnu.tar.gz && \
+    cd rust-1.48.0-powerpc64le-unknown-linux-gnu && \
+    ./install.sh && \
+    cd /tmp && \
+    rm -rf rust*; \
+    fi
 
 # Mirror the same dir structure that exists in the original source
 COPY scripts/get-collectd-plugins.py /opt/scripts/

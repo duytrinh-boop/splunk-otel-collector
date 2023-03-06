@@ -27,6 +27,7 @@ import yaml
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 TARGET_DIR = os.path.join("/", "usr", "share", "collectd") if len(sys.argv) < 2 else sys.argv[1]
 PYTHON_EXECUTABLE = sys.executable if sys.executable else "python"
+PIP_INSTALL = [PYTHON_EXECUTABLE, "-m", "pip", "install", "--no-warn-script-location"]
 
 with open(os.path.join(SCRIPT_DIR, "..", "collectd-plugins.yaml"), "r") as f:
     PLUGINS = yaml.safe_load(f)
@@ -55,13 +56,11 @@ url:     {u}""".format(
 
     # install pip deps
     for package in p.get("pip_packages", []):
-        subprocess.check_call([PYTHON_EXECUTABLE, "-m", "pip", "install", "-qq", "--no-warn-script-location", package])
+        subprocess.check_call(PIP_INSTALL + [package])
 
     requirements_file = os.path.join(plugin_dir, "requirements.txt")
     if os.path.isfile(requirements_file):
-        subprocess.check_call(
-            [PYTHON_EXECUTABLE, "-m", "pip", "install", "-qq", "--no-warn-script-location", "-r", requirements_file]
-        )
+        subprocess.check_call(PIP_INSTALL + ["-r", requirements_file])
 
     # remove unnecessary things
     for elem in p.get("can_remove", []):

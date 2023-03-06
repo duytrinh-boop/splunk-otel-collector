@@ -58,7 +58,7 @@ fossa:
   only:
     variables:
       - $CI_COMMIT_BRANCH == "main"
-      - $CI_COMMIT_BRANCH == "agent-bundle-arm64"
+      - $CI_COMMIT_BRANCH == "agent-bundle-ppc64le"
       - $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+.*/
   except:
     - schedules
@@ -150,6 +150,8 @@ agent-bundle-linux:
         TAG: main
       - ARCH: arm64
         TAG: arm
+      - ARCH: ppc64le
+        TAG: main
   tags:
     - $TAG
   cache:

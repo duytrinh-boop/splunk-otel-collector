@@ -36,7 +36,7 @@ BUILD_INFO_TESTS=-ldflags "-X $(BUILD_INFO_IMPORT_PATH_TESTS).Version=$(VERSION)
 
 SKIP_COMPILE=false
 ARCH=amd64
-BUNDLE_SUPPORTED_ARCHS := amd64 arm64
+BUNDLE_SUPPORTED_ARCHS := amd64 arm64 ppc64le
 SKIP_BUNDLE=false
 
 # For integration testing against local changes you can run

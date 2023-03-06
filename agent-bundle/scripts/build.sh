@@ -32,6 +32,7 @@ CACHE_OPTS=""
 if [[ "$CI" = "true" ]]; then
     # create and use the docker-container builder for local caching when running in github or gitlab
     mkdir -p "$CACHE_DIR"
+    docker buildx rm --force $IMAGE_NAME || true
     docker buildx create --name $IMAGE_NAME --driver docker-container
     CACHE_OPTS="--builder ${IMAGE_NAME} --cache-from=type=local,src=${CACHE_DIR} --cache-to=type=local,dest=${CACHE_DIR} --load"
 fi
