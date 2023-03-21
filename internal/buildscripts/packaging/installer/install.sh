@@ -69,6 +69,7 @@ collectd_config_dir="${collector_bundle_dir}/run/collectd"
 distro="$( get_distro )"
 distro_codename="$( get_distro_codename )"
 distro_version="$( get_distro_version )"
+distro_arch="$( uname -m )"
 repo_base="https://splunk.jfrog.io/splunk"
 
 deb_repo_base="${repo_base}/otel-collector-deb"
@@ -752,6 +753,17 @@ distro_is_supported() {
   return 1
 }
 
+arch_supported() {
+  case "$distro_arch" in
+    amd64|x86_64|aarch64|arm64)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 fluentd_supported() {
   case "$distro" in
     amzn)
@@ -761,6 +773,16 @@ fluentd_supported() {
       ;;
     sles|opensuse*)
       return 1
+      ;;
+    debian)
+      if [ "$distro_version" = "9" ] && [ "$distro_arch" = "aarch64" ]; then
+        return 1
+      fi
+      ;;
+    ubuntu)
+      if [ "$distro_version" = "16.04" ] && [ "$distro_arch" = "aarch64" ]; then
+        return 1
+      fi
       ;;
   esac
 
@@ -979,11 +1001,20 @@ parse_args_and_install() {
         echo "Your Linux distribution version could not be determined from /etc/os-release." >&2
         exit 1
       fi
+      if [ -z "$distro_arch" ]; then
+        echo "Your system's architecture could not be determined from 'uname -m'." >&2
+        exit 1
+      fi
       ;;
   esac
 
   if ! distro_is_supported; then
     echo "Your Linux distribution/version is not supported." >&2
+    exit 1
+  fi
+
+  if ! arch_supported; then
+    echo "Your system's architecture '${distro_arch}' is not supported." >&2
     exit 1
   fi
 
