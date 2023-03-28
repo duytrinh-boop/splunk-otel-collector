@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - ampere-test
   pull_request:
     paths:
       - '.github/workflows/build-and-test.yml'
@@ -30,12 +31,16 @@ env:
   REQUIREMENTS_PATH: "internal/buildscripts/packaging/tests/requirements.txt"
   RESULT_PATH: "~/testresults"
   GO_VERSION: 1.19.6
+  IMAGE_TAG: ${{ github.run_id }}
 
 jobs:
   setup-environment:
     name: setup-environment
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        RUNNER: [ubuntu-20.04, ampere]
+    runs-on: ${{ matrix.RUNNER }}
     steps:
       - name: Check out the codebase.
         uses: actions/checkout@v3
@@ -97,7 +102,11 @@ jobs:
   test:
     name: test
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        RUNNER: [ubuntu-20.04, ampere]
+      fail-fast: false
+    runs-on: ${{ matrix.RUNNER }}
     needs: [setup-environment]
     steps:
       - name: Check out the codebase.
@@ -119,13 +128,17 @@ jobs:
       - name: Uploading artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: unit-test-results
+          name: unit-test-results-${{ runner.arch }}
           path: ./unit-test-results
 
   coverage:
     name: coverage
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        RUNNER: [ubuntu-20.04, ampere]
+      fail-fast: false
+    runs-on: ${{ matrix.RUNNER }}
     needs: [setup-environment]
     steps:
       - name: Check out the codebase.
@@ -145,7 +158,7 @@ jobs:
       - name: Uploading artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: coverage-results
+          name: coverage-results-${{ runner.arch }}
           path: ./coverage.html
 
       # DISABLE CODECOV UNTIL THE SCRIPT IS AUDITED AND WE ARE CERTAIN IT IS OK TO TO EXECUTE IT.
@@ -183,11 +196,15 @@ jobs:
             ./bin/*
 
   agent-bundle-linux:
-    runs-on: ubuntu-20.04
     strategy:
       matrix:
-        ARCH: ["amd64", "arm64"]
+        include:
+          - RUNNER: ubuntu-20.04
+            ARCH: amd64
+          - RUNNER: ampere
+            ARCH: arm64
       fail-fast: false
+    runs-on: ${{ matrix.RUNNER }}
     steps:
       - uses: actions/checkout@v3
 
@@ -195,15 +212,8 @@ jobs:
         with:
           path: .cache/buildx/agent-bundle-${{ matrix.ARCH }}
           key: agent-bundle-buildx-${{ matrix.ARCH }}-${{ hashFiles('pkg/signalfx-agent/bundle/**') }}
-          restore-keys: |
-            agent-bundle-buildx-${{ matrix.ARCH }}-
 
-      - uses: docker/setup-qemu-action@v2
-        if: ${{ matrix.ARCH != 'amd64' }}
-        with:
-          platforms: ${{ matrix.ARCH }}
-
-      - run: make -C pkg/signalfx-agent/bundle agent-bundle-linux ARCH=${{ matrix.ARCH }}
+      - run: make -C pkg/signalfx-agent/bundle agent-bundle-linux ARCH=${{ matrix.ARCH }} IMAGE_TAG=${{ env.IMAGE_TAG }}
 
       - uses: actions/upload-artifact@v3
         with:
@@ -489,12 +499,19 @@ jobs:
 
   docker-otelcol:
     name: docker-otelcol
-    # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
     needs: [cross-compile, agent-bundle-linux]
+    # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
     strategy:
       matrix:
-        ARCH: [ "amd64", "arm64", "ppc64le" ]
+        include:
+          - RUNNER: ubuntu-20.04
+            ARCH: amd64
+          - RUNNER: ampere
+            ARCH: arm64
+          - RUNNER: ubuntu-20.04
+            ARCH: ppc64le
+      fail-fast: false
+    runs-on: ${{ matrix.RUNNER }}
     steps:
       - name: Check out the codebase.
         uses: actions/checkout@v3
@@ -506,7 +523,7 @@ jobs:
           cache-dependency-path: '**/go.sum'
 
       - name: Set up QEMU
-        if: ${{ matrix.ARCH != 'amd64' }}
+        if: ${{ matrix.ARCH == 'ppc64le' }}
         uses: docker/setup-qemu-action@v2
         with:
           platforms: ${{ matrix.ARCH }}
@@ -525,67 +542,70 @@ jobs:
 
       - name: Build ${{ matrix.ARCH }} docker image
         run: |
-          make docker-otelcol SKIP_COMPILE=true SKIP_BUNDLE=true ARCH=${{ matrix.ARCH }}
+          make docker-otelcol SKIP_COMPILE=true SKIP_BUNDLE=true ARCH=${{ matrix.ARCH }} IMAGE_TAG=${{ env.IMAGE_TAG }}
 
       - name: Check image arch
         run: |
           # ensure that the arch in the image manifest is correct
-          [ "$( docker inspect --format='{{.Architecture}}' otelcol:${{ matrix.ARCH }} )" = "${{ matrix.ARCH }}" ] || exit 1
+          [ "$( docker inspect --format='{{.Architecture}}' otelcol:${{ env.IMAGE_TAG }} )" = "${{ matrix.ARCH }}" ] || exit 1
 
       - name: Run docker image
         run: |
           # ensure the collector can start with the default config file
-          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol otelcol:${{ matrix.ARCH }}
+          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol-${{ env.IMAGE_TAG }} otelcol:${{ env.IMAGE_TAG }}
           sleep 10
-          if [ -z "$( docker ps --filter=status=running --filter=name=otelcol -q )" ]; then
-            docker logs otelcol
+          if [ -z "$( docker ps --filter=status=running --filter=name=otelcol-${{ env.IMAGE_TAG }} -q )" ]; then
+            docker logs otelcol-${{ env.IMAGE_TAG }}
             echo "Failing job execution: fail to start otelcol docker container with the default config in 10 seconds."
             exit 1
           fi
 
           # get all provided config files from the container
           tmpdir=$(mktemp -d)
-          docker cp otelcol:/etc/otel/collector $tmpdir
-          docker rm -f otelcol
+          docker cp otelcol-${{ env.IMAGE_TAG }}:/etc/otel/collector $tmpdir
+          docker rm -f otelcol-${{ env.IMAGE_TAG }}
 
           # ensure the collector can start with all provided config files
           configs=$(ls ${tmpdir}/collector/ 2>/dev/null)
           if [ -z "$configs" ]; then
-            echo "failed to get config files from otelcol:/etc/otel/collector"
+            echo "failed to get config files from otelcol-${{ env.IMAGE_TAG }}:/etc/otel/collector"
             exit 1
           fi
           for config in $configs; do
-            docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_CONFIG=/etc/otel/collector/${config} -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol otelcol:${{ matrix.ARCH }}
+            docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_CONFIG=/etc/otel/collector/${config} -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol-${{ env.IMAGE_TAG }} otelcol:${{ env.IMAGE_TAG }}
             sleep 10
-            if [ -z "$( docker ps --filter=status=running --filter=name=otelcol -q )" ]; then
-              docker logs otelcol
+            if [ -z "$( docker ps --filter=status=running --filter=name=otelcol-${{ env.IMAGE_TAG }} -q )" ]; then
+              docker logs otelcol-${{ env.IMAGE_TAG }}
               echo "Failing job execution: fail to start otelcol docker container with ${config} in 10 seconds."
               exit 1
             fi
-            docker rm -f otelcol
+            docker rm -f otelcol-${{ env.IMAGE_TAG }}
           done
 
       - name: Check journalctl
         run: |
           # ensure journalctl can run with the collected libraries
-          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol otelcol:${{ matrix.ARCH }}
-          docker exec otelcol /bin/journalctl
-          docker rm -f otelcol
+          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol-${{ env.IMAGE_TAG }} otelcol:${{ env.IMAGE_TAG }}
+          docker exec otelcol-${{ env.IMAGE_TAG }} /bin/journalctl
+          docker rm -f otelcol-${{ env.IMAGE_TAG }}
 
       - name: Check python and java
         if: ${{ matrix.ARCH != 'ppc64le' }}
         run: |
           # ensure python and java can run with the collected libraries
-          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol otelcol:${{ matrix.ARCH }}
-          docker exec otelcol /usr/lib/splunk-otel-collector/agent-bundle/bin/python --version
-          docker exec otelcol /usr/lib/splunk-otel-collector/agent-bundle/jre/bin/java -version
+          docker run --platform linux/${{ matrix.ARCH }} -d -e SPLUNK_ACCESS_TOKEN=12345 -e SPLUNK_REALM=fake-realm --name otelcol-${{ env.IMAGE_TAG }} otelcol:${{ env.IMAGE_TAG }}
+          docker exec otelcol-${{ env.IMAGE_TAG }} /usr/lib/splunk-otel-collector/agent-bundle/bin/python --version
+          docker exec otelcol-${{ env.IMAGE_TAG }} /usr/lib/splunk-otel-collector/agent-bundle/jre/bin/java -version
           # ensure collectd-python plugins were installed
-          docker exec otelcol bash -c 'test -d /usr/lib/splunk-otel-collector/agent-bundle/collectd-python/'
-          if [[ "$(docker exec otelcol ls /usr/lib/splunk-otel-collector/agent-bundle/collectd-python/ | wc -l)" -eq 0 ]]; then
+          docker exec otelcol-${{ env.IMAGE_TAG }} bash -c 'test -d /usr/lib/splunk-otel-collector/agent-bundle/collectd-python/'
+          if [[ "$(docker exec otelcol-${{ env.IMAGE_TAG }} ls /usr/lib/splunk-otel-collector/agent-bundle/collectd-python/ | wc -l)" -eq 0 ]]; then
             echo "/usr/lib/splunk-otel-collector/agent-bundle/collectd-python/ is empty!" >&2
             exit 1
           fi
-          docker rm -f otelcol
+          docker rm -f otelcol-${{ env.IMAGE_TAG }}
+
+      - run: docker rm -f otelcol-${{ env.IMAGE_TAG }} || true
+        if: ${{ always() }}
 
   docker-otelcol-windows:
     name: docker-otelcol-windows

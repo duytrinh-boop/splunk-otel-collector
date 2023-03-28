@@ -39,6 +39,8 @@ ARCH=amd64
 BUNDLE_SUPPORTED_ARCHS := amd64 arm64
 SKIP_BUNDLE=false
 
+IMAGE_TAG?=latest
+
 # For integration testing against local changes you can run
 # SPLUNK_OTEL_COLLECTOR_IMAGE='otelcol:latest' make -e docker-otelcol integration-test
 # for local docker build testing or
@@ -192,8 +194,10 @@ endif
 ifneq ($(filter $(ARCH), $(BUNDLE_SUPPORTED_ARCHS)),)
 	cp ./dist/agent-bundle_linux_$(ARCH).tar.gz ./cmd/otelcol/dist/agent-bundle.tar.gz
 endif
-	docker buildx build --platform linux/$(ARCH) -o type=image,name=otelcol:$(ARCH),push=false --build-arg ARCH=$(ARCH) --build-arg DOCKER_REPO=$(DOCKER_REPO) ./cmd/otelcol/
-	docker tag otelcol:$(ARCH) otelcol:latest
+	docker buildx build --platform linux/$(ARCH) -o type=image,name=otelcol:$(IMAGE_TAG),push=false --build-arg ARCH=$(ARCH) --build-arg DOCKER_REPO=$(DOCKER_REPO) ./cmd/otelcol/
+ifeq ($(IMAGE_TAG), latest)
+	docker tag otelcol:$(IMAGE_TAG) otelcol:$(ARCH)
+endif
 	rm -rf ./cmd/otelcol/dist
 
 .PHONY: binaries-all-sys

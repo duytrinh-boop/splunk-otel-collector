@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - ampere-test
   pull_request:
     paths:
       - '.github/workflows/trivy-scans.yml'
@@ -11,6 +12,7 @@ on:
 
 env:
   GO_VERSION: '1.19.6'
+  IMAGE_TAG: ${{ github.run_id }}
 
 concurrency:
   group: trivy-scans-${{ github.event.pull_request.number || github.ref }}
@@ -35,10 +37,14 @@ jobs:
 
   trivy-image-scan:
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.RUNNER }}
     strategy:
       matrix:
-        ARCH: [ "amd64", "arm64" ]
+        include:
+          - RUNNER: ubuntu-20.04
+            ARCH: amd64
+          - RUNNER: ampere
+            ARCH: arm64
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
@@ -50,21 +56,15 @@ jobs:
         with:
           path: .cache/buildx/agent-bundle-${{ matrix.ARCH }}
           key: agent-bundle-buildx-${{ matrix.ARCH }}-${{ hashFiles('pkg/signalfx-agent/bundle/**') }}
-          restore-keys: |
-            agent-bundle-buildx-${{ matrix.ARCH }}-
-      - uses: docker/setup-qemu-action@v2
-        if: ${{ matrix.ARCH != 'amd64' }}
-        with:
-          platforms: ${{ matrix.ARCH }}
       - run: |
-          make docker-otelcol ARCH=${{ matrix.ARCH }}
+          make docker-otelcol ARCH=${{ matrix.ARCH }} IMAGE_TAG=${{ env.IMAGE_TAG }}
         env:
           DOCKER_BUILDKIT: '1'
       - name: Run trivy image scan
         uses: aquasecurity/trivy-action@0.9.2
         with:
           scan-type: 'image'
-          image-ref: 'otelcol:latest'
+          image-ref: otelcol:${{ env.IMAGE_TAG }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'

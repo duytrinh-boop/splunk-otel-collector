@@ -24,6 +24,7 @@ ARCH="${1:-amd64}"
 DOCKER_REPO="${2:-docker.io}"
 CI="${CI:-false}"
 IMAGE_NAME="agent-bundle"
+IMAGE_TAG="${IMAGE_TAG:-$ARCH}"
 OUTPUT="${IMAGE_NAME}_linux_${ARCH}.tar.gz"
 output_tar=$(basename "$OUTPUT" .gz)
 CACHE_DIR="${REPO_DIR}/.cache/buildx/${IMAGE_NAME}-${ARCH}"
@@ -33,21 +34,23 @@ export DOCKER_BUILDKIT=1
 
 if [[ "$CI" = "true" ]]; then
     # create and use the docker-container builder for local caching when running in github or gitlab
+    if ! docker buildx ls | grep -q $IMAGE_NAME; then
+        docker buildx create --name $IMAGE_NAME --driver docker-container
+    fi
     mkdir -p "$CACHE_DIR"
-    docker buildx create --name $IMAGE_NAME --driver docker-container
     CACHE_OPTS="--builder ${IMAGE_NAME} --cache-from=type=local,src=${CACHE_DIR} --cache-to=type=local,dest=${CACHE_DIR} --load"
 fi
 
 docker buildx build \
     $CACHE_OPTS \
     --platform linux/${ARCH} \
-    -t ${IMAGE_NAME}:${ARCH} \
+    -t ${IMAGE_NAME}:${IMAGE_TAG} \
     -f ${SCRIPT_DIR}/../Dockerfile \
     --build-arg ARCH=${ARCH} \
     --build-arg DOCKER_REPO=${DOCKER_REPO} \
     ${SCRIPT_DIR}/..
 
-cid=$(docker create --platform linux/${ARCH} ${IMAGE_NAME}:${ARCH} true)
+cid=$(docker create --platform linux/${ARCH} ${IMAGE_NAME}:${IMAGE_TAG} true)
 
 tmpdir=$(mktemp -d)
 mkdir ${tmpdir}/${IMAGE_NAME}

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - ampere-test
   pull_request:
     paths:
       - '.github/workflows/integration-test.yml'
@@ -25,15 +26,20 @@ concurrency:
 env:
   GO_VERSION: "1.19.6"
   GOTESPLIT_TOTAL: "10"
+  IMAGE_TAG: ${{ github.run_id }}
 
 jobs:
   docker-otelcol:
-    name: docker-otelcol
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.RUNNER }}
     strategy:
       matrix:
-        ARCH: [ "amd64", "arm64" ]
+        include:
+          - RUNNER: ubuntu-20.04
+            ARCH: amd64
+          - RUNNER: ampere
+            ARCH: arm64
+      fail-fast: false
     steps:
       - uses: actions/checkout@v3
         with:
@@ -46,30 +52,19 @@ jobs:
         with:
           path: .cache/buildx/agent-bundle-${{ matrix.ARCH }}
           key: agent-bundle-buildx-${{ matrix.ARCH }}-${{ hashFiles('pkg/signalfx-agent/bundle/**') }}
-          restore-keys: |
-            agent-bundle-buildx-${{ matrix.ARCH }}-
-      - uses: docker/setup-qemu-action@v2
-        if: ${{ matrix.ARCH != 'amd64' }}
-        with:
-          platforms: ${{ matrix.ARCH }}
       - run: |
-          make docker-otelcol ARCH=${{ matrix.ARCH }}
+          make docker-otelcol ARCH=${{ matrix.ARCH }} IMAGE_TAG=${{ env.IMAGE_TAG }}
         env:
           DOCKER_BUILDKIT: '1'
-      - run: docker save -o ./bin/image.tar otelcol:latest
+      - run: docker save -o ./bin/image.tar otelcol:${{ env.IMAGE_TAG }}
       - uses: actions/upload-artifact@v3
         with:
           name: otelcol-${{ matrix.ARCH }}
           path: ./bin
 
-  integration-vet:
-    name: integration-vet
+  integration-vet-amd64:
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
     runs-on: ubuntu-20.04
-    strategy:
-      matrix:
-        ARCH: [ "amd64", "arm64" ]
-      fail-fast: false
     needs: [docker-otelcol]
     steps:
       - uses: actions/checkout@v3
@@ -81,27 +76,21 @@ jobs:
           cache-dependency-path: '**/go.sum'
       - uses: actions/download-artifact@v3
         with:
-          name: otelcol-${{ matrix.ARCH }}
+          name: otelcol-amd64
           path: ./bin
-      - uses: docker/setup-qemu-action@v2
-        if: ${{ matrix.ARCH != 'amd64' }}
-        with:
-          platforms: ${{ matrix.ARCH }}
       - run: docker load -i ./bin/image.tar
       - run: chmod a+x ./bin/*
       - run: make integration-vet
         env:
-          SPLUNK_OTEL_COLLECTOR_IMAGE: 'otelcol:latest'
+          SPLUNK_OTEL_COLLECTOR_IMAGE: otelcol:${{ env.IMAGE_TAG }}
 
-  integration-test:
-    name: integration-test
+  integration-test-amd64:
     # Use 20.04.5 until https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/16450 is resolved
     runs-on: ubuntu-20.04
-    needs: [docker-otelcol]
+    needs: [integration-vet-amd64]
     strategy:
       matrix:
         GOTESPLIT_INDEX: [ "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" ]
-        ARCH: [ "amd64", "arm64" ]
       fail-fast: false
     steps:
       - uses: actions/checkout@v3
@@ -113,16 +102,42 @@ jobs:
           cache-dependency-path: '**/go.sum'
       - uses: actions/download-artifact@v3
         with:
-          name: otelcol-${{ matrix.ARCH }}
+          name: otelcol-amd64
           path: ./bin
       - uses: docker/setup-qemu-action@v2
-        if: ${{ matrix.ARCH != 'amd64' }}
+        if: ${{ runner.arch != 'X64' }}
         with:
-          platforms: ${{ matrix.ARCH }}
+          platforms: amd64,arm64
       - run: docker load -i ./bin/image.tar
       - run: chmod a+x ./bin/*
       - run: make integration-test-split
         env:
-          SPLUNK_OTEL_COLLECTOR_IMAGE: 'otelcol:latest'
+          SPLUNK_OTEL_COLLECTOR_IMAGE: otelcol:${{ env.IMAGE_TAG }}
           GOTESPLIT_TOTAL: "${{ env.GOTESPLIT_TOTAL }}"
           GOTESPLIT_INDEX: "${{ matrix.GOTESPLIT_INDEX }}"
+
+  # Need to run tests serially and block concurrent jobs since we're running on a single host.
+  integration-test-arm64:
+    runs-on: ampere
+    needs: [docker-otelcol]
+    concurrency: integration-test-arm64
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: '**/go.sum'
+      - uses: actions/download-artifact@v3
+        with:
+          name: otelcol-arm64
+          path: ./bin
+      - uses: docker/setup-qemu-action@v2
+        with:
+          platforms: amd64
+      - run: docker load -i ./bin/image.tar
+      - run: chmod a+x ./bin/*
+      - run: make integration-test
+        env:
+          SPLUNK_OTEL_COLLECTOR_IMAGE: otelcol:${{ env.IMAGE_TAG }}
