@@ -118,6 +118,21 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 					dp.Attributes().PutStr(l.Name, l.Value)
 				}
 			}
+		case textparse.MetricTypeGaugeHistogram:
+			histogram := newMetric.SetEmptyHistogram()
+			for _, fm := range family.Metric {
+				dp := histogram.DataPoints().AppendEmpty()
+				dp.SetTimestamp(now)
+				for _, b := range fm.GetGaugeHistogram().GetBucket() {
+					dp.BucketCounts().Append(b.GetCumulativeCount())
+					dp.ExplicitBounds().Append(b.GetUpperBound())
+				}
+				dp.SetSum(fm.GetGaugeHistogram().GetSampleSum())
+				dp.SetCount(fm.GetGaugeHistogram().GetSampleCount())
+				for _, l := range fm.GetLabel() {
+					dp.Attributes().PutStr(l.Name, l.Value)
+				}
+			}
 		case textparse.MetricTypeSummary:
 			sum := newMetric.SetEmptySummary()
 			for _, fm := range family.Metric {
