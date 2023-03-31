@@ -75,28 +75,30 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 	rm := m.ResourceMetrics().AppendEmpty()
 	sm := rm.ScopeMetrics().AppendEmpty()
 	for _, family := range metricFamilies {
+		newMetric := sm.Metrics().AppendEmpty()
+		newMetric.SetName(family.GetName())
+		newMetric.SetUnit(family.GetUnit())
 		switch family.Type {
 		case textparse.MetricTypeCounter:
-			newMetric := sm.Metrics().AppendEmpty()
-			newMetric.SetName(family.GetName())
-			newMetric.SetUnit(family.GetUnit())
 			sum := newMetric.SetEmptySum()
 			sum.SetIsMonotonic(true)
 			for _, fm := range family.GetMetric() {
-				sum.DataPoints().AppendEmpty().SetDoubleValue(fm.GetCounter().GetValue())
+				dp := sum.DataPoints().AppendEmpty()
+				dp.SetDoubleValue(fm.GetCounter().GetValue())
+				for _, l := range fm.GetLabel() {
+					dp.Attributes().PutStr(l.Name, l.Value)
+				}
 			}
 		case textparse.MetricTypeGauge:
-			newMetric := sm.Metrics().AppendEmpty()
-			newMetric.SetName(family.GetName())
-			newMetric.SetUnit(family.GetUnit())
 			gauge := newMetric.SetEmptyGauge()
 			for _, fm := range family.Metric {
-				gauge.DataPoints().AppendEmpty().SetDoubleValue(fm.GetGauge().GetValue())
+				dp := gauge.DataPoints().AppendEmpty()
+				dp.SetDoubleValue(fm.GetGauge().GetValue())
+				for _, l := range fm.GetLabel() {
+					dp.Attributes().PutStr(l.Name, l.Value)
+				}
 			}
 		case textparse.MetricTypeHistogram:
-			newMetric := sm.Metrics().AppendEmpty()
-			newMetric.SetName(family.GetName())
-			newMetric.SetUnit(family.GetUnit())
 			histogram := newMetric.SetEmptyHistogram()
 			for _, fm := range family.Metric {
 				dp := histogram.DataPoints().AppendEmpty()
@@ -106,11 +108,11 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 				}
 				dp.SetSum(fm.GetHistogram().GetSampleSum())
 				dp.SetCount(fm.GetHistogram().GetSampleCount())
+				for _, l := range fm.GetLabel() {
+					dp.Attributes().PutStr(l.Name, l.Value)
+				}
 			}
 		case textparse.MetricTypeSummary:
-			newMetric := sm.Metrics().AppendEmpty()
-			newMetric.SetName(family.GetName())
-			newMetric.SetUnit(family.GetUnit())
 			sum := newMetric.SetEmptySummary()
 			for _, fm := range family.Metric {
 				dp := sum.DataPoints().AppendEmpty()
@@ -121,6 +123,9 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 				}
 				dp.SetSum(fm.GetSummary().GetSampleSum())
 				dp.SetCount(fm.GetSummary().GetSampleCount())
+				for _, l := range fm.GetLabel() {
+					dp.Attributes().PutStr(l.Name, l.Value)
+				}
 			}
 		default:
 			s.settings.Logger.Warn("No mapping present for metric family", zap.Any("family", family.Type))
