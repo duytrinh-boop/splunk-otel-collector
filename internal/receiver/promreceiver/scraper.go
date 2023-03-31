@@ -23,6 +23,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/textparse"
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
@@ -70,6 +71,7 @@ func (s *scraper) scrape(context.Context) (pmetric.Metrics, error) {
 func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metrics, error) {
 	m := pmetric.NewMetrics()
 	metricFamilies, err := ParseMetricFamilies(b, contentType, time.Now())
+	now := pcommon.NewTimestampFromTime(time.Now())
 	if err != nil {
 		return m, err
 	}
@@ -85,6 +87,7 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 			sum.SetIsMonotonic(true)
 			for _, fm := range family.GetMetric() {
 				dp := sum.DataPoints().AppendEmpty()
+				dp.SetTimestamp(now)
 				dp.SetDoubleValue(fm.GetCounter().GetValue())
 				for _, l := range fm.GetLabel() {
 					dp.Attributes().PutStr(l.Name, l.Value)
@@ -95,6 +98,7 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 			for _, fm := range family.Metric {
 				dp := gauge.DataPoints().AppendEmpty()
 				dp.SetDoubleValue(fm.GetGauge().GetValue())
+				dp.SetTimestamp(now)
 				for _, l := range fm.GetLabel() {
 					dp.Attributes().PutStr(l.Name, l.Value)
 				}
@@ -103,6 +107,7 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 			histogram := newMetric.SetEmptyHistogram()
 			for _, fm := range family.Metric {
 				dp := histogram.DataPoints().AppendEmpty()
+				dp.SetTimestamp(now)
 				for _, b := range fm.GetHistogram().GetBucket() {
 					dp.BucketCounts().Append(b.GetCumulativeCount())
 					dp.ExplicitBounds().Append(b.GetUpperBound())
@@ -117,6 +122,7 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 			sum := newMetric.SetEmptySummary()
 			for _, fm := range family.Metric {
 				dp := sum.DataPoints().AppendEmpty()
+				dp.SetTimestamp(now)
 				for _, q := range fm.GetSummary().GetQuantile() {
 					newQ := dp.QuantileValues().AppendEmpty()
 					newQ.SetValue(q.GetValue())
