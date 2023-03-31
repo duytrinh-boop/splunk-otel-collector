@@ -33,7 +33,7 @@ func NewFactory() receiver.Factory {
 	)
 }
 
-// createMetricsReceiver creates a metrics receiver for scraping elasticsearch metrics.
+// createMetricsReceiver creates a metrics receiver for scraping Prometheus metrics.
 func createMetricsReceiver(
 	_ context.Context,
 	params receiver.CreateSettings,
