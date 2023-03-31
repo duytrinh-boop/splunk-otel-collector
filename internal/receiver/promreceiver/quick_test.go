@@ -7,12 +7,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/receiver/receivertest"
+	"go.uber.org/zap"
 )
 
 func Test_ScrapeBigFile(t *testing.T) {
 	b, err := os.ReadFile("metrics.txt")
 	require.NoError(t, err)
-	s := newScraper(receivertest.NewNopCreateSettings(), createDefaultConfig().(*Config))
+	set := receivertest.NewNopCreateSettings()
+	set.Logger, _ = zap.NewDevelopment()
+	s := newScraper(set, createDefaultConfig().(*Config))
 	m, err := s.readFromResponse(b, "text/plain")
 	require.NoError(t, err)
 	fmt.Println(m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().Len())
@@ -20,4 +23,6 @@ func Test_ScrapeBigFile(t *testing.T) {
 	for i := 0; i < mms.Len(); i++ {
 		fmt.Println(mms.At(i).Name())
 	}
+	fmt.Println(m.DataPointCount())
+	fmt.Println(m.DataPointCount())
 }

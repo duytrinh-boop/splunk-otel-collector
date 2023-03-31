@@ -58,11 +58,12 @@ func (s *scraper) scrape(context.Context) (pmetric.Metrics, error) {
 	if err != nil {
 		return m, err
 	}
-	defer resp.Body.Close()
+
 	if resp.StatusCode != 200 {
 		return m, fmt.Errorf("Expecting a 200 response, got: %d with %s", resp.StatusCode, resp.Status)
 	}
 	b, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	return s.readFromResponse(b, resp.Header.Get("Content-Type"))
 }
 
@@ -126,6 +127,10 @@ func (s *scraper) readFromResponse(b []byte, contentType string) (pmetric.Metric
 				for _, l := range fm.GetLabel() {
 					dp.Attributes().PutStr(l.Name, l.Value)
 				}
+			}
+		case textparse.MetricTypeUnknown:
+			for _, m := range family.GetMetric() {
+				s.settings.Logger.Warn("Unknown metric detected", zap.Any("family", m.GetName()))
 			}
 		default:
 			s.settings.Logger.Warn("No mapping present for metric family", zap.Any("family", family.Type))
