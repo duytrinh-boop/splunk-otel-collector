@@ -491,6 +491,9 @@ func ParseMetricFamilies(b []byte, contentType string, ts time.Time) ([]*MetricF
 			if !ok {
 				fam = &MetricFamily{Name: &s, Type: t}
 				metricFamiliesByName[s] = fam
+			} else {
+				metricFamiliesByName[s].Type = t
+				metricFamiliesByName[s].Name = &s
 			}
 			mt = t
 			continue
