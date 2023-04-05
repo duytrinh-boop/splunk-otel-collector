@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'; # stop on all errors
+$ErrorActionPreference = 'Stop'; # stop on all errors
 $toolsDir = "$(Split-Path -parent $MyInvocation.MyCommand.Definition)"
 . $toolsDir\common.ps1
 
@@ -200,7 +200,6 @@ if (!$SPLUNK_ACCESS_TOKEN) {
 } else {
     write-host "Starting splunk-otel-collector service..."
     start_service -config_path "$config_path"
-    wait_for_service -timeout 60
     write-host "- Started"
 }
 

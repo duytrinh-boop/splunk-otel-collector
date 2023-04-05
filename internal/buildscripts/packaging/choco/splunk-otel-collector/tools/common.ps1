@@ -15,30 +15,28 @@ function service_installed([string]$name) {
 }
 
 # start the service if it's stopped
-function start_service([string]$name=$service_name, [string]$config_path=$config_path) {
+function start_service([string]$name=$service_name, [string]$config_path=$config_path, [int]$max_attempts=3, [int]$timeout=60) {
     if (!(service_running -name "$name")) {
         if (Test-Path -Path $config_path) {
-            try {
-                Start-Service -Name "$name"
-            } catch {
-                $err = $_.Exception.Message
-                $message = "
-                An error occurred while trying to start the $name service
-                $err
-                "
-                throw "$message"
-            }
-
-            # wait for the service to start
-            $startTime = Get-Date
-            while (!(service_running -name "$name")) {
-                # timeout after 60 seconds
-                if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt 60){
-                    throw "The $name service is not running.  Something went wrong during the installation.  Please check the Windows Event Viewer and rerun the installer if necessary."
+            for ($i=1; $i -le $max_attempts; $i++) {
+                try {
+                    Start-Service -Name "$name"
+                    break
+                } catch {
+                    $err = $_.Exception.Message
+                    $message = @"
+An error occurred while trying to start the $name service:
+$err
+Please check the system and application logs.
+"@
+                    if ($i -eq $max_attempts) {
+                        throw "$message"
+                    }
+                    Write-Warning "$message"
+                    Start-Sleep -Seconds 10
                 }
-                # give windows a second to synchronize service status
-                Start-Sleep -Seconds 1
             }
+            wait_for_service -name "$name" -timeout $timeout
         } else {
             throw "$config_path does not exist and is required to start the $name service"
         }
@@ -46,17 +44,27 @@ function start_service([string]$name=$service_name, [string]$config_path=$config
 }
 
 # stop the service if it's running
-function stop_service([string]$name) {
+function stop_service([string]$name, [int]$max_attempts=3) {
     if (service_running -name "$name") {
-        try {
-            Stop-Service -Name "$name"
-        } catch {
-            $err = $_.Exception.Message
-            $message = "
-            An error occurred while trying to stop the $name service
-            $message
-            "
+        for ($i=1; $i -le $max_attempts; $i++) {
+            try {
+                Stop-Service -Name "$name"
+                break
+            } catch {
+                $err = $_.Exception.Message
+                $message = @"
+An error occurred while trying to stop the $name service:
+$err
+Please check the system and application logs.
+"@
+                if ($i -eq $max_attempts) {
+                    throw "$message"
+                }
+                Write-Warning "$message"
+                Start-Sleep -Seconds 10
+            }
         }
+        wait_for_service_stop -name "$name"
     }
 }
 
@@ -86,7 +94,25 @@ function wait_for_service([string]$name=$service_name, [int]$timeout=60) {
     $startTime = Get-Date
     while (!(service_running -name "$name")){
         if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt $timeout){
-            throw "Service is not running.  Something went wrong durring the installation.  Please rerun the installer"
+            throw @"
+Timed out waiting for the $name service to be running.
+Please check the system and application logs.
+"@
+        }
+        # give windows a second to synchronize service status
+        Start-Sleep -Seconds 1
+    }
+}
+
+# wait for the service to stop
+function wait_for_service_stop([string]$name=$service_name, [int]$timeout=60) {
+    $startTime = Get-Date
+    while (service_running -name "$name"){
+        if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt $timeout){
+            throw @"
+Timed out waiting for the $name service to be stopped.
+Please check the system and application logs.
+"@
         }
         # give windows a second to synchronize service status
         Start-Sleep -Seconds 1
@@ -106,6 +132,26 @@ For more information execute:
         PS> Get-Help about_execution_policies
 "@
     }
+}
+
+function install_msi([string]$path) {
+    Write-Host "Installing $path ..."
+    $startTime = Get-Date
+    $proc = (Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/qn /norestart /i `"$path`"")
+    if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+        $err = "The installer failed with error code ${proc.ExitCode}."
+        try {
+            $events = (Get-WinEvent -ProviderName "MsiInstaller" | Where-Object { $_.TimeCreated -ge $startTime })
+            if ($events) {
+                $err += ($events | Format-List | Out-String)
+            }
+        } catch {
+            $err += "`r`nPlease check the system and application logs."
+            continue
+        }
+        throw "$err"
+    }
+    Write-Host "- Done"
 }
 
 $ErrorActionPreference = 'Stop'; # stop on all errors

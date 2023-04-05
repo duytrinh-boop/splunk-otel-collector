@@ -1,4 +1,4 @@
-[bool]$SkipFluend = $FALSE
+[bool]$SkipFluentd = $FALSE
 
 $fluentd_msi_name = "td-agent-4.3.0-x64.msi"
 $fluentd_dl_url = "https://packages.treasuredata.com/4/windows/$fluentd_msi_name"
@@ -21,11 +21,11 @@ try {
 
 #Skipping installation of fluentd if already installed
 if ((service_installed -name "$fluentd_service_name") -OR (Test-Path -Path "$fluentd_base_dir\bin\fluentd")) {
-    $SkipFluend = $TRUE
+    $SkipFluentd = $TRUE
     Write-Host "The $fluentd_service_name service is already installed. Skipping fluentd installation."
 }
 
-if (!$SkipFluend) {
+if (!$SkipFluentd) {
 
     # download a file to a given destination
     function download_file([string]$url, [string]$outputDir, [string]$fileName) {
@@ -79,13 +79,14 @@ if (!$SkipFluend) {
     download_file -url "$fluentd_dl_url" -outputDir "$tempdir" -fileName "$fluentd_msi_name"
     $fluentd_msi_path = (Join-Path "$tempdir" "$fluentd_msi_name")
 
-    Write-Host "Installing $fluentd_msi_path ..."
-    Start-Process msiexec.exe -Wait -ArgumentList "/qn /norestart /i `"$fluentd_msi_path`""
-    Write-Host "- Done"
+    install_msi -path "$fluentd_msi_path"
 
+    # The fluentd service is automatically started after msi installation.
+    # Wait for it to be running before trying to restart it with our custom config.
+    wait_for_service -name "$fluentd_service_name"
+
+    Write-Host "Restarting $fluentd_service_name service..."
     stop_service -name "$fluentd_service_name"
-
-    Write-Host "Starting $fluentd_service_name service..."
     start_service -name "$fluentd_service_name" -config_path "$fluentd_config_path"
     Write-Host "- Started"
 

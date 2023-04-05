@@ -288,30 +288,28 @@ function service_installed([string]$name) {
 }
 
 # start the service if it's stopped
-function start_service([string]$name, [string]$config_path=$config_path) {
+function start_service([string]$name, [string]$config_path=$config_path, [int]$max_attempts=3, [int]$timeout=60) {
     if (!(service_running -name "$name")) {
         if (Test-Path -Path $config_path) {
-            try {
-                Start-Service -Name "$name"
-            } catch {
-                $err = $_.Exception.Message
-                $message = "
-                An error occurred while trying to start the $name service
-                $err
-                "
-                throw "$message"
-            }
-
-            # wait for the service to start
-            $startTime = Get-Date
-            while (!(service_running -name "$name")) {
-                # timeout after 30 seconds
-                if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt 60){
-                    throw "The $name service is not running. Check the Windows Event Viewer and rerun the installer if needed."
+            for ($i=1; $i -le $max_attempts; $i++) {
+                try {
+                    Start-Service -Name "$name"
+                    break
+                } catch {
+                    $err = $_.Exception.Message
+                    $message = @"
+An error occurred while trying to start the $name service:
+$err
+Please check the system and application logs.
+"@
+                    if ($i -eq $max_attempts) {
+                        throw "$message"
+                    }
+                    Write-Warning "$message"
+                    Start-Sleep -Seconds 10
                 }
-                # give windows a second to synchronize service status
-                Start-Sleep -Seconds 1
             }
+            wait_for_service -name "$name" -timeout $timeout
         } else {
             throw "$config_path does not exist and is required to start the $name service"
         }
@@ -319,17 +317,57 @@ function start_service([string]$name, [string]$config_path=$config_path) {
 }
 
 # stop the service if it's running
-function stop_service([string]$name) {
-    if ((service_running -name "$name")) {
-        try {
-            Stop-Service -Name "$name"
-        } catch {
-            $err = $_.Exception.Message
-            $message = "
-            An error occurred while trying to stop the $name service
-            $message
-            "
+function stop_service([string]$name, [int]$max_attempts=3) {
+    if (service_running -name "$name") {
+        for ($i=1; $i -le $max_attempts; $i++) {
+            try {
+                Stop-Service -Name "$name"
+                break
+            } catch {
+                $err = $_.Exception.Message
+                $message = @"
+An error occurred while trying to stop the $name service:
+$err
+Please check the system and application logs.
+"@
+                if ($i -eq $max_attempts) {
+                    throw "$message"
+                }
+                Write-Warning "$message"
+                Start-Sleep -Seconds 10
+            }
         }
+        wait_for_service_stop -name "$name"
+    }
+}
+
+# wait for the service to start
+function wait_for_service([string]$name=$service_name, [int]$timeout=60) {
+    $startTime = Get-Date
+    while (!(service_running -name "$name")){
+        if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt $timeout){
+            throw @"
+Timed out waiting for the $name service to be running.
+Please check the system and application logs.
+"@
+        }
+        # give windows a second to synchronize service status
+        Start-Sleep -Seconds 1
+    }
+}
+
+# wait for the service to stop
+function wait_for_service_stop([string]$name=$service_name, [int]$timeout=60) {
+    $startTime = Get-Date
+    while (service_running -name "$name"){
+        if ((New-TimeSpan -Start $startTime -End (Get-Date)).TotalSeconds -gt $timeout){
+            throw @"
+Timed out waiting for the $name service to be stopped.
+Please check the system and application logs.
+"@
+        }
+        # give windows a second to synchronize service status
+        Start-Sleep -Seconds 1
     }
 }
 
@@ -355,6 +393,26 @@ function msi_installed([string]$name="Splunk OpenTelemetry Collector") {
 function update_registry([string]$path, [string]$name, [string]$value) {
     echo "Updating $path for $name..."
     Set-ItemProperty -path "$path" -name "$name" -value "$value"
+}
+
+function install_msi([string]$path) {
+    Write-Host "Installing $path ..."
+    $startTime = Get-Date
+    $proc = (Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/qn /norestart /i `"$path`"")
+    if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+        $err = "The installer failed with error code ${proc.ExitCode}."
+        try {
+            $events = (Get-WinEvent -ProviderName "MsiInstaller" | Where-Object { $_.TimeCreated -ge $startTime })
+            if ($events) {
+                $err += ($events | Format-List | Out-String)
+            }
+        } catch {
+            $err += "`r`nPlease check the system and application logs."
+            continue
+        }
+        throw "$err"
+    }
+    Write-Host "- Done"
 }
 
 $ErrorActionPreference = 'Stop'; # stop on all errors
@@ -463,9 +521,7 @@ if ($collector_msi_url) {
     }
 }
 
-echo "Installing $msi_path ..."
-Start-Process msiexec.exe -Wait -ArgumentList "/qn /norestart /i `"$msi_path`""
-echo "- Done"
+install_msi -path "$msi_path"
 
 # copy the default configs to $program_data_path
 mkdir "$program_data_path" -ErrorAction Ignore
@@ -549,13 +605,14 @@ if ($with_fluentd) {
     download_file -url "$fluentd_dl_url" -outputDir "$tempdir" -fileName "$fluentd_msi_name"
     $fluentd_msi_path = (Join-Path "$tempdir" "$fluentd_msi_name")
 
-    echo "Installing $fluentd_msi_path ..."
-    Start-Process msiexec.exe -Wait -ArgumentList "/qn /norestart /i `"$fluentd_msi_path`""
-    echo "- Done"
+    install_msi -path "$fluentd_msi_path"
 
+    # The fluentd service is automatically started after msi installation.
+    # Wait for it to be running before trying to restart it with our custom config.
+    wait_for_service -name "$fluentd_service_name"
+
+    echo "Restarting $fluentd_service_name service..."
     stop_service -name "$fluentd_service_name"
-
-    echo "Starting $fluentd_service_name service..."
     start_service -name "$fluentd_service_name" -config_path "$fluentd_config_path"
     echo "- Started"
 }

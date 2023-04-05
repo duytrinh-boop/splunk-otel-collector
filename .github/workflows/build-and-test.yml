@@ -400,10 +400,10 @@ jobs:
           Set-PSDebug -Trace 1
           $msi_path = Resolve-Path .\dist\splunk-otel-collector*.msi
           $env:VERIFY_ACCESS_TOKEN = "false"
-          .\internal\buildscripts\packaging\installer\install.ps1 -access_token "testing123" -realm "test" -msi_path "$msi_path" -mode "${{ matrix.MODE }}" -with_fluentd $${{ matrix.WITH_FLUENTD }}
+          .\internal\buildscripts\packaging\installer\install.ps1 -access_token "testing123" -realm "test" -msi_path "$msi_path" -mode "${{ matrix.MODE }}" -memory "256" -with_fluentd $${{ matrix.WITH_FLUENTD }}
           Start-Sleep -s 30
-          powershell.exe -File .github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
-          powershell.exe -File .github\workflows\scripts\win-test-support-bundle.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
+          & ${{ github.workspace }}\.github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -access_token "testing123" -realm "test" -memory "256" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
+          & ${{ github.workspace }}\.github\workflows\scripts\win-test-support-bundle.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
           Test-Path -Path "$env:ProgramFiles\Splunk\OpenTelemetry Collector\agent-bundle\python\python.exe"
           Test-Path -Path "$env:ProgramFiles\Splunk\OpenTelemetry Collector\agent-bundle\collectd-python"
 
@@ -464,14 +464,14 @@ jobs:
           Set-PSDebug -Trace 1
           $choco_file_name = Resolve-Path .\dist\splunk-otel-collector*.nupkg
           write-host "Installing $choco_file_name..."
-          choco install splunk-otel-collector -s="$choco_file_name" --params="'/SPLUNK_ACCESS_TOKEN=12345 /SPLUNK_REALM=test /MODE:${{ matrix.MODE }} /WITH_FLUENTD:${{ matrix.WITH_FLUENTD }}'" -y
+          choco install splunk-otel-collector -s="$choco_file_name" --params="'/SPLUNK_ACCESS_TOKEN=12345 /SPLUNK_REALM=test /MODE:${{ matrix.MODE }} /SPLUNK_MEMORY_TOTAL_MIB=256 /WITH_FLUENTD:${{ matrix.WITH_FLUENTD }}'" -y
           Start-Sleep -s 30
-          powershell.exe -File .github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
-          powershell.exe -File .github\workflows\scripts\win-test-support-bundle.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
+          & ${{ github.workspace }}\.github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -access_token "12345" -realm "test" -memory "256" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
+          & ${{ github.workspace }}\.github\workflows\scripts\win-test-support-bundle.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
           write-host "Reinstalling choco package..."
           choco install splunk-otel-collector -s="$choco_file_name" --params="'/MODE:${{ matrix.MODE }} /WITH_FLUENTD:${{ matrix.WITH_FLUENTD }}'" --force -y
           Start-Sleep -s 30
-          powershell.exe -File .github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
+          & ${{ github.workspace }}\.github\workflows\scripts\win-test-services.ps1 -mode "${{ matrix.MODE }}" -access_token "12345" -realm "test" -memory "256" -with_fluentd "${{ matrix.WITH_FLUENTD }}"
           write-host "Uninstalling choco package..."
           choco uninstall -y splunk-otel-collector
           if (!((Get-CimInstance -ClassName win32_service -Filter "Name = 'splunk-otel-collector'" | Select Name, State).State -Eq "Running")) {
