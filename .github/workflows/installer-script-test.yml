@@ -82,6 +82,8 @@ jobs:
 
       - name: Test installer script
         timeout-minutes: 60
+        env:
+          DOCKER_BUILDKIT: "1"
         run: |
           mkdir -p ${{ env.RESULT_PATH }}
           distro="${{ matrix.DISTRO }}"
@@ -89,7 +91,7 @@ jobs:
             # workaround for pytest substring matching
             distro="amazonlinux-2 and not amazonlinux-2023"
           fi
-          pytest -n auto --verbose -x -k "$distro and ${{ matrix.ARCH }}" \
+          pytest -s --verbose -x -k "$distro and ${{ matrix.ARCH }}" \
             --junitxml=${{ env.RESULT_PATH }}/results.xml \
             --html=${{ env.RESULT_PATH }}/results.html \
             --self-contained-html \
