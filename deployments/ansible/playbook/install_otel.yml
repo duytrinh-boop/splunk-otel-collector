@@ -1,0 +1,36 @@
+---
+# Example playbook to perform either a splunk installation or upgrade
+# - hosts:
+#     - localhost
+#   roles:
+#     - ../roles/collector
+#   vars:
+#     - deployment_task: define task in cmdline
+#   vars_files:
+#     # - "../environments/development/docker_vars/tintin-website.yml"
+#     # #- load variables based on linux distro family https://ankush-chavan.medium.com/importing-the-variable-files-based-on-the-os-family-in-the-ansible-playbook-9e5528bfb47d
+#     # - "../roles/docker_vm_simulation/vars/{{ simulated_vm_os_family }}.yml"
+
+
+
+# - name: Install Splunk OpenTelemetry Collector
+- hosts: linux
+  become: yes
+  # For Windows "become: yes" will raise error.
+  # "The Powershell family is incompatible with the sudo become plugin". Remove "become: yes" tag to run on Windows
+  roles:
+    - ../roles/collector
+  vars:
+    splunk_access_token: YOUR_ACCESS_TOKEN
+    splunk_realm: SPLUNK_REALM
+
+
+- hosts: windows
+  #become: yes
+  # For Windows "become: yes" will raise error.
+  # "The Powershell family is incompatible with the sudo become plugin". Remove "become: yes" tag to run on Windows
+  roles:
+    - ../roles/collector
+  vars:
+    splunk_access_token: YOUR_ACCESS_TOKEN
+    splunk_realm: SPLUNK_REALM
