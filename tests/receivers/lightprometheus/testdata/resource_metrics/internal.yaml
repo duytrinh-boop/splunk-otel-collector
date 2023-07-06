@@ -1,9 +1,6 @@
 resource_metrics:
   - attributes:
-      http.scheme: http
-      net.host.name: localhost:8889
-      net.host.port: "8889"
-      service.instance.id: myjob
+      service.instance.id: localhost:8889
       service.name: myjob
     scope_metrics:
       - metrics:
@@ -110,6 +107,24 @@ resource_metrics:
             type: DoubleMonotonicCumulativeSum
             attributes:
               receiver: lightprometheus/myjob
+              service_instance_id: <ANY>
+              service_name: otelcol
+              service_version: <VERSION_FROM_BUILD>
+          - name: otelcol_scraper_scraped_metric_points
+            description: Number of metric points successfully scraped.
+            type: DoubleMonotonicCumulativeSum
+            attributes:
+              receiver: lightprometheus/myjob
+              scraper: lightprometheus
+              service_instance_id: <ANY>
+              service_name: otelcol
+              service_version: <VERSION_FROM_BUILD>
+          - name: otelcol_scraper_errored_metric_points
+            description: Number of metric points that were unable to be scraped.
+            type: DoubleMonotonicCumulativeSum
+            attributes:
+              receiver: lightprometheus/myjob
+              scraper: lightprometheus
               service_instance_id: <ANY>
               service_name: otelcol
               service_version: <VERSION_FROM_BUILD>

@@ -75,7 +75,7 @@ type Config struct {
 	Extensions map[component.ID]ExtensionEntry
 	// DiscoveryObservers is a map of observer extensions to use in discovery.
 	// They must be in `config.d/extensions` directory and end with ".discovery.yaml".
-	DiscoveryObservers map[component.ID]ExtensionEntry
+	DiscoveryObservers map[component.ID]ObserverEntry
 	// Processors is a map of extensions to use in final config.
 	// They must be in `config.d/processors` directory.
 	Processors map[component.ID]ProcessorEntry
@@ -98,7 +98,7 @@ func NewConfig(logger *zap.Logger) *Config {
 		Service:             ServiceEntry{Entry{}},
 		Exporters:           map[component.ID]ExporterEntry{},
 		Extensions:          map[component.ID]ExtensionEntry{},
-		DiscoveryObservers:  map[component.ID]ExtensionEntry{},
+		DiscoveryObservers:  map[component.ID]ObserverEntry{},
 		Processors:          map[component.ID]ProcessorEntry{},
 		Receivers:           map[component.ID]ReceiverEntry{},
 		ReceiversToDiscover: map[component.ID]ReceiverToDiscoverEntry{},
@@ -170,7 +170,9 @@ func (ExporterEntry) ErrorF(path string, err error) error {
 var _ entryType = (*ObserverEntry)(nil)
 
 type ObserverEntry struct {
-	Entry `yaml:",inline"`
+	Enabled *bool
+	Config  Entry
+	Entry   `yaml:",inline"`
 }
 
 func (ObserverEntry) ErrorF(path string, err error) error {
@@ -203,6 +205,8 @@ type ReceiverToDiscoverEntry struct {
 	// Platform/observer specific config by observer extension ID.
 	// These are merged w/ "default" component.ID in a "config" map
 	Config map[component.ID]map[string]any
+	// Whether to attempt to discover this receiver
+	Enabled *bool
 	// The remaining items used to merge applicable rule and config
 	Entry `yaml:",inline"`
 }
@@ -547,12 +551,16 @@ func mergeConfigWithBundle(userCfg *Config, bundleCfg *Config) error {
 			userCfg.DiscoveryObservers[obs] = bundledObs
 			continue
 		}
-		bundledConfMap := confmap.NewFromStringMap(bundledObs.ToStringMap())
-		userConfMap := confmap.NewFromStringMap(userObs.ToStringMap())
+		enabled := bundledObs.Enabled
+		if userObs.Enabled != nil {
+			enabled = userObs.Enabled
+		}
+		bundledConfMap := confmap.NewFromStringMap(bundledObs.Config.ToStringMap())
+		userConfMap := confmap.NewFromStringMap(userObs.Config.ToStringMap())
 		if err := bundledConfMap.Merge(userConfMap); err != nil {
 			return fmt.Errorf("failed merged user and bundled observer %q discovery configs: %w", obs, err)
 		}
-		userCfg.DiscoveryObservers[obs] = ExtensionEntry{Entry: bundledConfMap.ToStringMap()}
+		userCfg.DiscoveryObservers[obs] = ObserverEntry{Enabled: enabled, Config: bundledConfMap.ToStringMap()}
 	}
 	for rec, bundledRec := range bundleCfg.ReceiversToDiscover {
 		userRec, ok := userCfg.ReceiversToDiscover[rec]
@@ -560,13 +568,20 @@ func mergeConfigWithBundle(userCfg *Config, bundleCfg *Config) error {
 			userCfg.ReceiversToDiscover[rec] = bundledRec
 			continue
 		}
+
+		enabled := bundledRec.Enabled
+		if userRec.Enabled != nil {
+			enabled = userRec.Enabled
+		}
+
 		bundledConfMap := confmap.NewFromStringMap(bundledRec.ToStringMap())
 		userConfMap := confmap.NewFromStringMap(userRec.ToStringMap())
 		if err := bundledConfMap.Merge(userConfMap); err != nil {
 			return fmt.Errorf("failed merged user and bundled receiver %q discovery configs: %w", rec, err)
 		}
 		receiver := ReceiverToDiscoverEntry{
-			Rule: bundledRec.Rule, Config: bundledRec.Config, Entry: bundledConfMap.ToStringMap(),
+			Enabled: enabled, Rule: bundledRec.Rule,
+			Config: bundledRec.Config, Entry: bundledConfMap.ToStringMap(),
 		}
 		for cid, rule := range userRec.Rule {
 			receiver.Rule[cid] = rule

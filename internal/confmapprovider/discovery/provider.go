@@ -16,7 +16,9 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -26,7 +28,12 @@ import (
 
 	"github.com/signalfx/splunk-otel-collector/internal/confmapprovider/discovery/bundle"
 	"github.com/signalfx/splunk-otel-collector/internal/confmapprovider/discovery/properties"
-	"github.com/signalfx/splunk-otel-collector/internal/settings"
+)
+
+const (
+	discoveryModeScheme = "splunk.discovery"
+	propertyScheme      = "splunk.property"
+	configDScheme       = "splunk.configd"
 )
 
 var _ confmap.Provider = (*providerShim)(nil)
@@ -85,21 +92,21 @@ func New() (Provider, error) {
 }
 
 func (m *mapProvider) ConfigDProvider() confmap.Provider {
-	return providerShim{
+	return &providerShim{
 		scheme:   m.ConfigDScheme(),
 		retrieve: m.retrieve(m.ConfigDScheme()),
 	}
 }
 
 func (m *mapProvider) DiscoveryModeProvider() confmap.Provider {
-	return providerShim{
+	return &providerShim{
 		scheme:   m.DiscoveryModeScheme(),
 		retrieve: m.retrieve(m.DiscoveryModeScheme()),
 	}
 }
 
 func (m *mapProvider) PropertyProvider() confmap.Provider {
-	return providerShim{
+	return &providerShim{
 		scheme:   m.PropertyScheme(),
 		retrieve: m.retrieve(m.PropertyScheme()),
 	}
@@ -113,7 +120,7 @@ func (m *mapProvider) retrieve(scheme string) func(context.Context, string, conf
 		}
 
 		uriVal := uri[len(schemePrefix):]
-		if schemePrefix == fmt.Sprintf("%s:", settings.PropertyScheme) {
+		if schemePrefix == fmt.Sprintf("%s:", propertyScheme) {
 			return m.parsedProperty(uriVal)
 		}
 
@@ -124,8 +131,15 @@ func (m *mapProvider) retrieve(scheme string) func(context.Context, string, conf
 				cfg = NewConfig(m.logger)
 				m.logger.Debug("loading config.d", zap.String("config-dir", uriVal))
 				if err := cfg.Load(uriVal); err != nil {
-					m.logger.Error("failed loading config.d", zap.String("config-dir", uriVal), zap.Error(err))
-					return nil, err
+					// ignore if we're attempting to load a default that hasn't been installed to expected path
+					if uriVal == "/etc/otel/collector/config.d" && errors.Is(err, fs.ErrNotExist) {
+						m.logger.Debug("failed loading default nonexistent config.d (disregarding).", zap.String("config-dir", uriVal), zap.Error(err))
+						// restore empty base since fields are purged on error
+						cfg = NewConfig(m.logger)
+					} else {
+						m.logger.Error("failed loading config.d", zap.String("config-dir", uriVal), zap.Error(err))
+						return nil, err
+					}
 				}
 				m.logger.Debug("successfully loaded config.d", zap.String("config-dir", uriVal))
 				m.configs[uriVal] = cfg
@@ -135,11 +149,11 @@ func (m *mapProvider) retrieve(scheme string) func(context.Context, string, conf
 			cfg = NewConfig(m.logger)
 		}
 
-		if strings.HasPrefix(uri, settings.ConfigDScheme) {
+		if strings.HasPrefix(uri, configDScheme) {
 			return confmap.NewRetrieved(cfg.toServiceConfig())
 		}
 
-		if strings.HasPrefix(uri, settings.DiscoveryModeScheme) {
+		if strings.HasPrefix(uri, discoveryModeScheme) {
 			var bundledCfg *Config
 			if bundledCfg, ok = m.configs["<bundled>"]; !ok {
 				m.logger.Debug("loading bundle.d")
@@ -166,15 +180,15 @@ func (m *mapProvider) retrieve(scheme string) func(context.Context, string, conf
 }
 
 func (m *mapProvider) ConfigDScheme() string {
-	return settings.ConfigDScheme
+	return configDScheme
 }
 
 func (m *mapProvider) DiscoveryModeScheme() string {
-	return settings.DiscoveryModeScheme
+	return discoveryModeScheme
 }
 
 func (m *mapProvider) PropertyScheme() string {
-	return settings.PropertyScheme
+	return propertyScheme
 }
 
 func (m *mapProvider) parsedProperty(rawProperty string) (*confmap.Retrieved, error) {

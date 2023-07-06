@@ -35,30 +35,76 @@ import (
 
 func TestScraper(t *testing.T) {
 	promMock := newPromMockServer(t)
-	cfg := createDefaultConfig().(*Config)
-	cfg.Endpoint = fmt.Sprintf("%s%s", promMock.URL, "/metrics")
-	require.NoError(t, component.ValidateConfig(cfg))
-
-	scraper := newScraper(receivertest.NewNopCreateSettings(), cfg)
-
-	err := scraper.start(context.Background(), componenttest.NewNopHost())
-	require.NoError(t, err)
-
-	actualMetrics, err := scraper.scrape(context.Background())
-	require.NoError(t, err)
-
-	expectedFile := filepath.Join("testdata", "scraper", "expected.json")
-	expectedMetrics, err := readMetrics(expectedFile)
-	require.NoError(t, err)
-	attrs := expectedMetrics.ResourceMetrics().At(0).Resource().Attributes()
 	u, err := url.Parse(promMock.URL)
 	require.NoError(t, err)
-	attrs.PutStr(conventions.AttributeNetHostPort, u.Port())
-	attrs.PutStr(conventions.AttributeNetHostName, u.Host)
 
-	require.NoError(t, pmetrictest.CompareMetrics(expectedMetrics, actualMetrics,
-		pmetrictest.IgnoreMetricDataPointsOrder(), pmetrictest.IgnoreStartTimestamp(),
-		pmetrictest.IgnoreTimestamp(), pmetrictest.IgnoreMetricsOrder()))
+	tests := []struct {
+		cfg                        *Config
+		expectedResourceAttributes map[string]any
+		name                       string
+	}{
+		{
+			name: "default_config",
+			cfg:  createDefaultConfig().(*Config),
+			expectedResourceAttributes: map[string]any{
+				conventions.AttributeServiceName:       "",
+				conventions.AttributeServiceInstanceID: u.Host,
+			},
+		},
+		{
+			name: "all_resource_attributes",
+			cfg: func() *Config {
+				cfg := createDefaultConfig().(*Config)
+				cfg.ResourceAttributes.ServiceName.Enabled = true
+				cfg.ResourceAttributes.HTTPScheme.Enabled = true
+				cfg.ResourceAttributes.NetHostPort.Enabled = true
+				cfg.ResourceAttributes.NetHostName.Enabled = true
+				return cfg
+			}(),
+			expectedResourceAttributes: map[string]any{
+				conventions.AttributeServiceName:       "",
+				conventions.AttributeServiceInstanceID: u.Host,
+				conventions.AttributeNetHostName:       u.Host,
+				conventions.AttributeNetHostPort:       u.Port(),
+				conventions.AttributeHTTPScheme:        "http",
+			},
+		},
+		{
+			name: "no_resource_attributes",
+			cfg: func() *Config {
+				cfg := createDefaultConfig().(*Config)
+				cfg.ResourceAttributes.ServiceInstanceID.Enabled = false
+				cfg.ResourceAttributes.ServiceName.Enabled = false
+				return cfg
+			}(),
+			expectedResourceAttributes: map[string]any{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			cfg.Endpoint = fmt.Sprintf("%s%s", promMock.URL, "/metrics")
+			require.NoError(t, component.ValidateConfig(cfg))
+
+			scraper := newScraper(receivertest.NewNopCreateSettings(), cfg)
+
+			err := scraper.start(context.Background(), componenttest.NewNopHost())
+			require.NoError(t, err)
+
+			actualMetrics, err := scraper.scrape(context.Background())
+			require.NoError(t, err)
+
+			expectedFile := filepath.Join("testdata", "scraper", "expected.json")
+			expectedMetrics, err := readMetrics(expectedFile)
+			require.NoError(t, err)
+			require.NoError(t, expectedMetrics.ResourceMetrics().At(0).Resource().Attributes().FromRaw(tt.expectedResourceAttributes))
+
+			require.NoError(t, pmetrictest.CompareMetrics(expectedMetrics, actualMetrics,
+				pmetrictest.IgnoreMetricDataPointsOrder(), pmetrictest.IgnoreStartTimestamp(),
+				pmetrictest.IgnoreTimestamp(), pmetrictest.IgnoreMetricsOrder()))
+		})
+	}
 }
 
 func readMetrics(filePath string) (pmetric.Metrics, error) {
@@ -119,12 +165,7 @@ istio_requests_total{response_code="foo-bar-value",reporter="foo-bar-value",sour
 istio_requests_total{response_code="foo-bar-value",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="foo-bar-value",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value"} 2
 istio_requests_total{response_code="foo-bar-value",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="foo-bar-value",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value"} 1
 # TYPE istio_request_bytes histogram
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="0.5"} 0
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="1"} 0
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="2"} 0
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="3"} 0
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="4"} 0
-istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="5"} 0
+istio_request_bytes_bucket{response_code="200",reporter="foo-bar-value",source_workload="foo-bar-value",source_workload_namespace="foo-bar-value",source_principal="foo-bar-value",source_app="foo-bar-value",source_version="foo-bar-value",source_cluster="foo-bar-value",destination_workload="foo-bar-value",destination_workload_namespace="foo-bar-value",destination_principal="foo-bar-value",destination_app="foo-bar-value",destination_version="foo-bar-value",destination_service="foo-bar-value",destination_service_name="foo-bar-value",destination_service_namespace="foo-bar-value",destination_cluster="foo-bar-value",request_protocol="foo-bar-value",response_flags="foo-bar-value",grpc_response_status="foo-bar-value",connection_security_policy="unknown",source_canonical_service="foo-bar-value",destination_canonical_service="foo-bar-value",source_canonical_revision="foo-bar-value",destination_canonical_revision="foo-bar-value",le="+Inf"} 0
 `))
 			require.NoError(t, err)
 			return

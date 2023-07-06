@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,13 +37,14 @@ import (
 	"go.opentelemetry.io/collector/otelcol"
 	"go.opentelemetry.io/collector/pdata/plog"
 	otelcolreceiver "go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v2"
 
 	"github.com/signalfx/splunk-otel-collector/internal/common/discovery"
 	"github.com/signalfx/splunk-otel-collector/internal/components"
+	"github.com/signalfx/splunk-otel-collector/internal/confmapprovider/discovery/internal"
 	"github.com/signalfx/splunk-otel-collector/internal/confmapprovider/discovery/properties"
 	"github.com/signalfx/splunk-otel-collector/internal/receiver/discoveryreceiver"
 	"github.com/signalfx/splunk-otel-collector/internal/version"
@@ -252,6 +254,10 @@ func (d *discoverer) createDiscoveryReceiversAndObservers(cfg *Config) (map[comp
 			} else if !ok {
 				continue
 			}
+			enabled := true
+			if e := receiver.Enabled; e != nil {
+				enabled = *e
+			}
 			receiverEntry := receiver.Entry.ToStringMap()
 			if receiversPropertiesConf.IsSet(receiverID.String()) {
 				receiverPropertiesConf, e := receiversPropertiesConf.Sub(receiverID.String())
@@ -261,12 +267,9 @@ func (d *discoverer) createDiscoveryReceiversAndObservers(cfg *Config) (map[comp
 				entryConf := confmap.NewFromStringMap(receiverEntry)
 
 				if receiverPropertiesConf.IsSet("enabled") {
-					enabled := true
-					if strings.ToLower(fmt.Sprintf("%v", receiverPropertiesConf.Get("enabled"))) == "false" {
-						enabled = false
-					}
-					if !enabled {
-						continue
+					if b, convErr := strconv.ParseBool(strings.ToLower(fmt.Sprintf("%v", receiverPropertiesConf.Get("enabled")))); convErr == nil {
+						// convErr would have been detected in properties
+						enabled = b
 					}
 					pc := receiverPropertiesConf.ToStringMap()
 					delete(pc, "enabled")
@@ -277,6 +280,10 @@ func (d *discoverer) createDiscoveryReceiversAndObservers(cfg *Config) (map[comp
 					return nil, nil, fmt.Errorf("failed merging receiver %q properties config: %w", receiverID, err)
 				}
 				receiverEntry = entryConf.ToStringMap()
+			}
+
+			if !enabled {
+				continue
 			}
 
 			d.addUnexpandedReceiverConfig(receiverID, observerID, receiverEntry)
@@ -315,7 +322,14 @@ func (d *discoverer) createObserver(observerID component.ID, cfg *Config) (otelc
 	}
 
 	observerConfig := observerFactory.CreateDefaultConfig()
-	observerCfgMap := confmap.NewFromStringMap(cfg.DiscoveryObservers[observerID].ToStringMap())
+	enabled := true
+	if e := cfg.DiscoveryObservers[observerID].Enabled; e != nil {
+		enabled = *e
+	}
+
+	observerDiscoveryConf := confmap.NewFromStringMap(
+		cfg.DiscoveryObservers[observerID].Config.ToStringMap(),
+	)
 
 	if d.propertiesConf.IsSet("extensions") {
 		propertiesConf, e := d.propertiesConf.Sub("extensions")
@@ -323,35 +337,40 @@ func (d *discoverer) createObserver(observerID component.ID, cfg *Config) (otelc
 			return nil, fmt.Errorf("failed obtaining extensions properties config: %w", e)
 		}
 		if propertiesConf.IsSet(observerID.String()) {
-			propertiesConf, e = propertiesConf.Sub(observerID.String())
-			if e != nil {
+			var observerProperties *confmap.Conf
+			if observerProperties, e = propertiesConf.Sub(observerID.String()); e != nil {
+				return nil, fmt.Errorf("failed obtaining observer properties: %w", e)
+			}
+			if propertiesConf, e = observerProperties.Sub("config"); e != nil {
 				return nil, fmt.Errorf("failed obtaining observer properties config: %w", e)
 			}
-			if propertiesConf.IsSet("enabled") {
-				enabled := true
-				if strings.ToLower(fmt.Sprintf("%v", propertiesConf.Get("enabled"))) == "false" {
-					enabled = false
+			if observerProperties.IsSet("enabled") {
+				if b, convErr := strconv.ParseBool(strings.ToLower(fmt.Sprintf("%v", observerProperties.Get("enabled")))); convErr == nil {
+					// convErr would have been detected in properties
+					enabled = b
 				}
-				if !enabled {
-					return nil, nil
-				}
-				// delete enabled property since it's not valid config field
-				pc := propertiesConf.ToStringMap()
-				delete(pc, "enabled")
-				propertiesConf = confmap.NewFromStringMap(pc)
 			}
-			if err = observerCfgMap.Merge(propertiesConf); err != nil {
+			if err = observerDiscoveryConf.Merge(propertiesConf); err != nil {
 				return nil, fmt.Errorf("failed merging observer properties config: %w", err)
 			}
-			cfg.DiscoveryObservers[observerID] = ExtensionEntry{observerCfgMap.ToStringMap()}
+
+			// update the discovery config item for later retrieval in unexpanded form
+			cfg.DiscoveryObservers[observerID] = ObserverEntry{
+				Enabled: &enabled,
+				Config:  observerDiscoveryConf.ToStringMap(),
+			}
 		}
 	}
 
-	if err = d.expandConverter.Convert(context.Background(), observerCfgMap); err != nil {
+	if e := cfg.DiscoveryObservers[observerID].Enabled; e != nil && !*e {
+		return nil, nil
+	}
+
+	if err = d.expandConverter.Convert(context.Background(), observerDiscoveryConf); err != nil {
 		return nil, fmt.Errorf("error converting environment variables in %q config: %w", observerID, err)
 	}
 
-	if err = component.UnmarshalConfig(observerCfgMap, observerConfig); err != nil {
+	if err = component.UnmarshalConfig(observerDiscoveryConf, observerConfig); err != nil {
 		return nil, fmt.Errorf("failed unmarshaling %q config: %w", observerID, err)
 	}
 
@@ -387,7 +406,7 @@ func (d *discoverer) updateReceiverForObserver(receiverID component.ID, receiver
 	}
 	if hasObserverConfigBlock {
 		if hasDefault {
-			if err := mergeMaps(defaultConfig, observerConfigBlock); err != nil {
+			if err := internal.MergeMaps(defaultConfig, observerConfigBlock); err != nil {
 				return false, fmt.Errorf("failed merging %q config for %q: %w", receiverID, observerID, err)
 			}
 		} else {
@@ -448,7 +467,7 @@ func (d *discoverer) discoveryConfig(cfg *Config) (map[string]any, error) {
 		if observerCfg, ok := cfg.DiscoveryObservers[observerID]; ok {
 			obsMap := map[string]any{
 				"extensions": map[string]any{
-					observerID.String(): observerCfg.ToStringMap(),
+					observerID.String(): observerCfg.Config.ToStringMap(),
 				},
 			}
 			if err := extensions.Merge(confmap.NewFromStringMap(obsMap)); err != nil {
@@ -484,7 +503,7 @@ func (d *discoverer) createExtensionCreateSettings(observerID component.ID) otel
 		TelemetrySettings: component.TelemetrySettings{
 			Logger:         zap.New(d.logger.Core()).With(zap.String("kind", observerID.String())),
 			TracerProvider: trace.NewNoopTracerProvider(),
-			MeterProvider:  metric.NewNoopMeterProvider(),
+			MeterProvider:  noop.NewMeterProvider(),
 			MetricsLevel:   configtelemetry.LevelDetailed,
 		},
 		BuildInfo: d.info,
@@ -496,7 +515,7 @@ func (d *discoverer) createReceiverCreateSettings() otelcolreceiver.CreateSettin
 		TelemetrySettings: component.TelemetrySettings{
 			Logger:         zap.New(d.logger.Core()).With(zap.String("kind", "receiver")),
 			TracerProvider: trace.NewNoopTracerProvider(),
-			MeterProvider:  metric.NewNoopMeterProvider(),
+			MeterProvider:  noop.NewMeterProvider(),
 			MetricsLevel:   configtelemetry.LevelDetailed,
 		},
 		BuildInfo: d.info,
@@ -695,19 +714,17 @@ func (d *discoverer) ConsumeLogs(_ context.Context, ld plog.Logs) error {
 // Priority is discovery.properties.yaml < env var properties < --set properties. --set and env var properties
 // are already resolved at this point.
 func (d *discoverer) mergeDiscoveryPropertiesEntry(cfg *Config) error {
-	props := map[string]any{}
-	for k, v := range cfg.DiscoveryProperties.Entry {
-		if prop, err := properties.NewProperty(k, fmt.Sprintf("%s", v)); err != nil {
-			d.logger.Warn(fmt.Sprintf("invalid discovery property %q", k), zap.Error(err))
-		} else {
-			mergeMaps(props, prop.ToStringMap())
-		}
+	conf, warning, fatal := properties.LoadConf(cfg.DiscoveryProperties.ToStringMap())
+	if fatal != nil {
+		return fatal
 	}
-	fileProps := confmap.NewFromStringMap(props)
-	if err := fileProps.Merge(d.propertiesConf); err != nil {
+	if warning != nil {
+		d.logger.Warn("invalid discovery properties will be disregarded", zap.Error(warning))
+	}
+	if err := conf.Merge(d.propertiesConf); err != nil {
 		return err
 	}
-	d.propertiesConf = fileProps
+	d.propertiesConf = conf
 	return nil
 }
 
@@ -723,16 +740,4 @@ func determineCurrentStatus(current, observed discovery.StatusType) discovery.St
 		current = observed
 	}
 	return current
-}
-
-func mergeMaps(dst, src map[string]any) error {
-	dstMap := confmap.NewFromStringMap(dst)
-	srcMap := confmap.NewFromStringMap(src)
-	if err := dstMap.Merge(srcMap); err != nil {
-		return err
-	}
-	for k, v := range dstMap.ToStringMap() {
-		dst[k] = v
-	}
-	return nil
 }

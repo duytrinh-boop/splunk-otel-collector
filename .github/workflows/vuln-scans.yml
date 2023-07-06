@@ -11,7 +11,7 @@ on:
       - '.trivyignore'
 
 env:
-  GO_VERSION: '1.19.6'
+  GO_VERSION: '1.20.5'
 
 concurrency:
   group: vuln-scans-${{ github.event.pull_request.number || github.ref }}
@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Run trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.9.2
+        uses: aquasecurity/trivy-action@0.11.2
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -61,11 +61,12 @@ jobs:
       - uses: actions/cache@v3
         with:
           path: .cache/buildx/agent-bundle-${{ matrix.ARCH }}
-          key: agent-bundle-buildx-${{ matrix.ARCH }}-${{ hashFiles('pkg/signalfx-agent/bundle/**') }}
+          key: agent-bundle-buildx-${{ matrix.ARCH }}-${{ hashFiles('internal/signalfx-agent/bundle/**') }}
       - uses: docker/setup-qemu-action@v2
         if: ${{ matrix.ARCH != 'amd64' }}
         with:
           platforms: ${{ matrix.ARCH }}
+          image: tonistiigi/binfmt:qemu-v7.0.0
       - run: |
           make docker-otelcol ARCH=${{ matrix.ARCH }}
         env:
@@ -90,13 +91,14 @@ jobs:
         if: ${{ matrix.ARCH != 'amd64' }}
         with:
           platforms: ${{ matrix.ARCH }}
+          image: tonistiigi/binfmt:qemu-v7.0.0
       - uses: actions/download-artifact@v3
         with:
           name: otelcol-${{ matrix.ARCH }}
           path: ./dist
       - run: docker load -i ./dist/image.tar
       - name: Run trivy image scan
-        uses: aquasecurity/trivy-action@0.9.2
+        uses: aquasecurity/trivy-action@0.11.2
         with:
           scan-type: 'image'
           image-ref: 'otelcol:latest'
@@ -120,6 +122,7 @@ jobs:
         if: ${{ matrix.ARCH != 'amd64' }}
         with:
           platforms: ${{ matrix.ARCH }}
+          image: tonistiigi/binfmt:qemu-v7.0.0
       - uses: actions/download-artifact@v3
         with:
           name: otelcol-${{ matrix.ARCH }}

@@ -81,6 +81,32 @@ func TestNewSettingsWithHelpFlags(t *testing.T) {
 	require.Nil(t, settings)
 }
 
+func TestNewSettingsConfMapProviders(t *testing.T) {
+	t.Cleanup(setRequiredEnvVars(t))
+	settings, err := New([]string{})
+	require.NoError(t, err)
+	require.NotNil(t, settings)
+
+	confMapProviders := settings.ConfMapProviders()
+
+	require.Contains(t, confMapProviders, settings.discovery.PropertyScheme())
+	propertyProvider := confMapProviders[settings.discovery.PropertyScheme()]
+
+	require.Contains(t, confMapProviders, settings.discovery.ConfigDScheme())
+	configdProvider := confMapProviders[settings.discovery.ConfigDScheme()]
+
+	require.Contains(t, confMapProviders, settings.discovery.DiscoveryModeScheme())
+	discoveryModeProvider := confMapProviders[settings.discovery.DiscoveryModeScheme()]
+
+	require.Equal(t, map[string]confmap.Provider{
+		envProvider.Scheme():                     envProvider,
+		fileProvider.Scheme():                    fileProvider,
+		settings.discovery.PropertyScheme():      propertyProvider,
+		settings.discovery.ConfigDScheme():       configdProvider,
+		settings.discovery.DiscoveryModeScheme(): discoveryModeProvider,
+	}, confMapProviders)
+}
+
 func TestNewSettingsNoConvertConfig(t *testing.T) {
 	t.Cleanup(clearEnv(t))
 	settings, err := New([]string{
@@ -300,7 +326,7 @@ func TestConfigPrecedence(t *testing.T) {
       cpu:
 exporters:
   logging:
-    loglevel: debug
+    verbosity: detailed
 service:
   pipelines:
     metrics:
@@ -451,6 +477,85 @@ func TestConfigDirFromEnvVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, settings.configDir.value)
 	require.Equal(t, "/from/env/var", getConfigDir(settings))
+}
+
+func TestConfigArgFileURIForm(t *testing.T) {
+	t.Cleanup(clearEnv(t))
+	uriPath := fmt.Sprintf("file:%s", configPath)
+	settings, err := New([]string{"--config", uriPath})
+	require.NoError(t, err)
+	require.Equal(t, []string{uriPath}, settings.configPaths.value)
+	require.Equal(t, settings.configPaths.value, settings.ResolverURIs())
+}
+
+func TestConfigArgEnvURIForm(t *testing.T) {
+	t.Cleanup(clearEnv(t))
+	settings, err := New([]string{"--config", "env:SOME_ENV_VAR"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"env:SOME_ENV_VAR"}, settings.configPaths.value)
+	require.Equal(t, settings.configPaths.value, settings.ResolverURIs())
+
+}
+
+func TestConfigArgUnsupportedURI(t *testing.T) {
+	t.Cleanup(clearEnv(t))
+
+	oldWriter := log.Default().Writer()
+	defer func() {
+		log.Default().SetOutput(oldWriter)
+	}()
+
+	logs := new(bytes.Buffer)
+	log.Default().SetOutput(logs)
+
+	settings, err := New([]string{"--config", "invalid:invalid"})
+	// though invalid, we defer failing to collector service
+	require.NoError(t, err)
+	require.NotNil(t, settings)
+	require.Equal(t, []string{"invalid:invalid"}, settings.configPaths.value)
+	require.Equal(t, settings.configPaths.value, settings.ResolverURIs())
+
+	require.Contains(t, logs.String(), `"invalid" is an unsupported config provider scheme for this Collector distribution (not in [env file]).`)
+}
+
+func TestDefaultDiscoveryConfigDir(t *testing.T) {
+	t.Cleanup(setRequiredEnvVars(t))
+	settings, err := New([]string{"--discovery"})
+	require.NoError(t, err)
+	require.True(t, settings.discoveryMode)
+	require.False(t, settings.configD)
+
+	require.Equal(t, []string{
+		localGatewayConfig,
+		"splunk.discovery:/etc/otel/collector/config.d",
+	}, settings.ResolverURIs())
+}
+
+func TestInheritedDiscoveryConfigDir(t *testing.T) {
+	t.Cleanup(setRequiredEnvVars(t))
+	settings, err := New([]string{"--discovery", "--config-dir", "/some/config.d"})
+	require.NoError(t, err)
+	require.True(t, settings.discoveryMode)
+	require.False(t, settings.configD)
+
+	require.Equal(t, []string{
+		localGatewayConfig,
+		"splunk.discovery:/some/config.d",
+	}, settings.ResolverURIs())
+}
+
+func TestInheritedDiscoveryConfigDirWithConfigD(t *testing.T) {
+	t.Cleanup(setRequiredEnvVars(t))
+	settings, err := New([]string{"--discovery", "--config-dir", "/some/config.d", "--configd"})
+	require.NoError(t, err)
+	require.True(t, settings.discoveryMode)
+	require.True(t, settings.configD)
+
+	require.Equal(t, []string{
+		localGatewayConfig,
+		"splunk.configd:/some/config.d",
+		"splunk.discovery:/some/config.d",
+	}, settings.ResolverURIs())
 }
 
 // to satisfy Settings generation
