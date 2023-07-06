@@ -1,0 +1,2 @@
+---
+splunk_otel_collector_config: "/etc/otel/collector/gateway_config.yaml"
