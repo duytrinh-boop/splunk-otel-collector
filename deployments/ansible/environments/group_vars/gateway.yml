@@ -1,2 +1,5 @@
 ---
+splunk_realm: eu0
+splunk_otel_auto_instrumentation_resource_attributes: deployment.environment=dev
 splunk_otel_collector_config: "/etc/otel/collector/gateway_config.yaml"
+install_fluentd: no
