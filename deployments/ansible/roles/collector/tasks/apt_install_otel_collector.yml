@@ -1,5 +1,10 @@
 ---
 # Install Splunk OpenTelemetry Collector from apt repository
+- name: Update and upgrade APT packages
+  become: true
+  apt:
+    update_cache: yes
+    upgrade: yes
 
 - name: Install apt dependencies for secure transport
   ansible.builtin.apt:
