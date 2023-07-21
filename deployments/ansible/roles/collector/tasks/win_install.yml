@@ -11,3 +11,7 @@
 - name: Install Fluentd with msi package manager
   ansible.builtin.import_tasks: win_fluentd_install.yml
   when: install_fluentd
+
+- name: Install java agent (otel auto instrumentation)
+  ansible.builtin.import_tasks: otel_win_install_auto_instrumentation.yml
+  when: install_splunk_otel_auto_instrumentation

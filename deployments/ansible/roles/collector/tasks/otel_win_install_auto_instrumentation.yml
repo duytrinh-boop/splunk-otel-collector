@@ -1,0 +1,22 @@
+---
+# Install Splunk OpenTelemetry Auto Instrumentation from yum repository
+
+#Invoke-WebRequest -Uri https://github.com/signalfx/splunk-otel-java/releases/latest/download/splunk-otel-javaagent.jar -OutFile splunk-otel-javaagent.jar
+
+# $env:OTEL_SERVICE_NAME=<yourServiceName>
+# $env:OTEL_RESOURCE_ATTRIBUTES='deployment.environment=<envtype>,service.version=<version>'
+
+# Set the -javaagent argument to the path of the Java agent:
+
+# java -javaagent:./splunk-otel-javaagent.jar -jar <myapp>.jar
+
+- name: Ensure destination directory exists
+  win_file:
+    path: "{{ splunk_bundle_dir }}\\java-agent"
+    state: directory
+
+- name: Download splunk-otel-javaagent.jar
+  win_get_url:
+    url: "https://github.com/signalfx/splunk-otel-java/releases/latest/download/splunk-otel-javaagent.jar"
+    dest: "{{ splunk_bundle_dir }}\\java-agent\\splunk-otel-javaagent.jar"
+    force: yes # Force download even if the destination file already exists, useful in case the java agent is updated
