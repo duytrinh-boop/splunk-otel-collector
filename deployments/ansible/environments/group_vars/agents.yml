@@ -5,6 +5,7 @@ splunk_otel_collector_config_source: "{{ role_path }}/files/agent_to_gateway_con
 
 splunk_otel_auto_instrumentation_resource_attributes: deployment.environment=dev
 install_fluentd: no
+install_splunk_otel_auto_instrumentation: yes
 
 splunk_otel_collector_additional_env_vars:
   SPLUNK_GATEWAY_URL: "{{ groups['gateway'] | first }}"
